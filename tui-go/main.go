@@ -108,7 +108,7 @@ func (m model) View() string {
 func (m model) homeView() string {
 	var lines []string
 
-	lines = append(lines, titleStyle.Render("MY-TUI"))
+	lines = append(lines, renderBanner(m.width))
 	lines = append(lines, subtitleStyle.Render("一个用 Go 写的终端工具箱"))
 	lines = append(lines, "")
 

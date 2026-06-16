@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 
@@ -29,6 +30,9 @@ type model struct {
 	height         int
 	password       string
 	passwordLength int
+	useUpper       bool
+	useLower       bool
+	useDigits      bool
 	useSymbols     bool
 }
 
@@ -88,6 +92,14 @@ var (
 			BorderForeground(lipgloss.Color("#C3E88D")).
 			Padding(1, 2).
 			Width(58)
+
+	onStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#C3E88D")).
+		Bold(true)
+
+	offStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F78C6C")).
+			Bold(true)
 )
 
 func initialModel() model {
@@ -107,6 +119,9 @@ func initialModel() model {
 		width:          80,
 		height:         24,
 		passwordLength: 20,
+		useUpper:       true,
+		useLower:       true,
+		useDigits:      true,
 		useSymbols:     true,
 	}
 }
@@ -123,11 +138,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
+		key := msg.String()
 
-		case "esc", "b":
+		if key == "ctrl+c" || key == "q" {
+			return m, tea.Quit
+		}
+
+		if m.page == pagePassword {
+			return updatePasswordPage(m, key), nil
+		}
+
+		if key == "esc" || key == "b" {
 			if m.page != pageHome {
 				m.page = pageHome
 				m.message = "已返回首页"
@@ -135,53 +156,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if m.page == pagePassword {
-			switch msg.String() {
-			case "g", "enter":
-				password, err := generatePassword(m.passwordLength, m.useSymbols)
-				if err != nil {
-					m.message = "密码生成失败：" + err.Error()
-				} else {
-					m.password = password
-					m.message = "已生成新密码"
-				}
-
-			case "+", "=":
-				if m.passwordLength < 64 {
-					m.passwordLength++
-				}
-				password, err := generatePassword(m.passwordLength, m.useSymbols)
-				if err == nil {
-					m.password = password
-				}
-
-			case "-", "_":
-				if m.passwordLength > 8 {
-					m.passwordLength--
-				}
-				password, err := generatePassword(m.passwordLength, m.useSymbols)
-				if err == nil {
-					m.password = password
-				}
-
-			case "s":
-				m.useSymbols = !m.useSymbols
-				password, err := generatePassword(m.passwordLength, m.useSymbols)
-				if err == nil {
-					m.password = password
-				}
-				if m.useSymbols {
-					m.message = "已开启特殊符号"
-				} else {
-					m.message = "已关闭特殊符号"
-				}
-			}
-
-			return m, nil
-		}
-
 		if m.page == pageHome {
-			switch msg.String() {
+			switch key {
 			case "up", "k":
 				if m.cursor > 0 {
 					m.cursor--
@@ -198,14 +174,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.message = "当前状态：服务运行中"
 
 				case 1:
-					password, err := generatePassword(m.passwordLength, m.useSymbols)
-					if err != nil {
-						m.message = "密码生成失败：" + err.Error()
-					} else {
-						m.password = password
-						m.message = "已进入密码生成器"
-						m.page = pagePassword
-					}
+					m.page = pagePassword
+					m = refreshPassword(m, "已进入密码生成器")
 
 				case 2:
 					m.message = "正在启动服务..."
@@ -232,6 +202,75 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func updatePasswordPage(m model, key string) model {
+	switch key {
+	case "esc":
+		m.page = pageHome
+		m.message = "已返回首页"
+
+	case "enter":
+		m = refreshPassword(m, "已重新生成密码")
+
+	case "+", "=":
+		if m.passwordLength < 64 {
+			m.passwordLength++
+		}
+		m = refreshPassword(m, fmt.Sprintf("密码长度：%d", m.passwordLength))
+
+	case "-", "_":
+		if m.passwordLength > 8 {
+			m.passwordLength--
+		}
+		m = refreshPassword(m, fmt.Sprintf("密码长度：%d", m.passwordLength))
+
+	case "1":
+		if m.useUpper && m.enabledCharsetCount() == 1 {
+			m.message = "至少保留一种字符类型"
+			return m
+		}
+		m.useUpper = !m.useUpper
+		m = refreshPassword(m, "已切换大写英文字母")
+
+	case "2":
+		if m.useLower && m.enabledCharsetCount() == 1 {
+			m.message = "至少保留一种字符类型"
+			return m
+		}
+		m.useLower = !m.useLower
+		m = refreshPassword(m, "已切换小写英文字母")
+
+	case "3":
+		if m.useDigits && m.enabledCharsetCount() == 1 {
+			m.message = "至少保留一种字符类型"
+			return m
+		}
+		m.useDigits = !m.useDigits
+		m = refreshPassword(m, "已切换数字")
+
+	case "4":
+		if m.useSymbols && m.enabledCharsetCount() == 1 {
+			m.message = "至少保留一种字符类型"
+			return m
+		}
+		m.useSymbols = !m.useSymbols
+		m = refreshPassword(m, "已切换特殊符号")
+
+	case "5":
+		if m.password == "" {
+			m.message = "当前还没有密码，先按 Enter 生成"
+			return m
+		}
+
+		if err := copyToClipboard(m.password); err != nil {
+			m.message = "复制失败：" + err.Error()
+		} else {
+			m.message = "密码已复制到剪贴板"
+		}
+	}
+
+	return m
+}
+
 func (m model) View() string {
 	switch m.page {
 	case pageLogs:
@@ -254,7 +293,7 @@ func (m model) homeView() string {
 		lipgloss.Top,
 		renderCard("服务状态", "Running"),
 		"  ",
-		renderCard("版本", "v0.2.0"),
+		renderCard("版本", "v0.3.0"),
 		"  ",
 		renderCard("系统", runtime.GOOS),
 	)
@@ -327,21 +366,26 @@ func (m model) logsView() string {
 func (m model) passwordView() string {
 	var lines []string
 
-	symbolStatus := "开启"
-	if !m.useSymbols {
-		symbolStatus = "关闭"
-	}
-
 	lines = append(lines, titleStyle.Render("密码生成器"))
 	lines = append(lines, subtitleStyle.Render("使用 crypto/rand 生成随机强密码"))
 	lines = append(lines, "")
 
-	lines = append(lines, normalStyle.Render(fmt.Sprintf("长度：%d", m.passwordLength)))
-	lines = append(lines, normalStyle.Render("特殊符号："+symbolStatus))
+	options := []string{
+		fmt.Sprintf("长度：%d", m.passwordLength),
+		"1 大写英文字母：" + renderSwitch(m.useUpper),
+		"2 小写英文字母：" + renderSwitch(m.useLower),
+		"3 数字：" + renderSwitch(m.useDigits),
+		"4 特殊符号：" + renderSwitch(m.useSymbols),
+	}
+
+	for _, option := range options {
+		lines = append(lines, normalStyle.Render(option))
+	}
+
 	lines = append(lines, "")
 
 	if m.password == "" {
-		lines = append(lines, warnStyle.Render("按 g 生成密码"))
+		lines = append(lines, warnStyle.Render("按 Enter 生成密码"))
 	} else {
 		lines = append(lines, passwordStyle.Render(m.password))
 	}
@@ -349,7 +393,7 @@ func (m model) passwordView() string {
 	lines = append(lines, "")
 	lines = append(lines, messageStyle.Render("状态："+m.message))
 	lines = append(lines, "")
-	lines = append(lines, helpStyle.Render("g / Enter 重新生成 · + 增加长度 · - 减少长度 · s 开关符号 · Esc / b 返回"))
+	lines = append(lines, helpStyle.Render("Enter 生成 · + 增加长度 · - 减少长度 · 1/2/3/4 开关类型 · 5 复制 · Esc 返回"))
 
 	content := strings.Join(lines, "\n")
 
@@ -366,24 +410,81 @@ func renderCard(title string, value string) string {
 	return cardStyle.Render(content)
 }
 
-func generatePassword(length int, useSymbols bool) (string, error) {
+func renderSwitch(enabled bool) string {
+	if enabled {
+		return onStyle.Render("开启")
+	}
+	return offStyle.Render("关闭")
+}
+
+func refreshPassword(m model, msg string) model {
+	password, err := generatePassword(
+		m.passwordLength,
+		m.useUpper,
+		m.useLower,
+		m.useDigits,
+		m.useSymbols,
+	)
+
+	if err != nil {
+		m.message = "密码生成失败：" + err.Error()
+		return m
+	}
+
+	m.password = password
+	m.message = msg
+	return m
+}
+
+func (m model) enabledCharsetCount() int {
+	count := 0
+
+	if m.useUpper {
+		count++
+	}
+	if m.useLower {
+		count++
+	}
+	if m.useDigits {
+		count++
+	}
+	if m.useSymbols {
+		count++
+	}
+
+	return count
+}
+
+func generatePassword(length int, useUpper bool, useLower bool, useDigits bool, useSymbols bool) (string, error) {
 	if length < 8 {
 		length = 8
 	}
 
-	lower := "abcdefghijklmnopqrstuvwxyz"
 	upper := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	lower := "abcdefghijklmnopqrstuvwxyz"
 	digits := "0123456789"
 	symbols := "!@#$%^&*()-_=+[]{};:,.?/"
 
-	sets := []string{lower, upper, digits}
+	var sets []string
 
+	if useUpper {
+		sets = append(sets, upper)
+	}
+	if useLower {
+		sets = append(sets, lower)
+	}
+	if useDigits {
+		sets = append(sets, digits)
+	}
 	if useSymbols {
 		sets = append(sets, symbols)
 	}
 
-	allChars := strings.Join(sets, "")
+	if len(sets) == 0 {
+		return "", fmt.Errorf("至少需要开启一种字符类型")
+	}
 
+	allChars := strings.Join(sets, "")
 	password := make([]byte, 0, length)
 
 	for _, set := range sets {
@@ -422,6 +523,44 @@ func randomChar(chars string) (byte, error) {
 	}
 
 	return chars[n.Int64()], nil
+}
+
+func copyToClipboard(text string) error {
+	switch runtime.GOOS {
+	case "windows":
+		cmd := exec.Command("powershell", "-NoProfile", "-Command", "Set-Clipboard -Value ([Console]::In.ReadToEnd())")
+		cmd.Stdin = strings.NewReader(text)
+		return cmd.Run()
+
+	case "darwin":
+		cmd := exec.Command("pbcopy")
+		cmd.Stdin = strings.NewReader(text)
+		return cmd.Run()
+
+	case "linux":
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			cmd := exec.Command("wl-copy")
+			cmd.Stdin = strings.NewReader(text)
+			return cmd.Run()
+		}
+
+		if _, err := exec.LookPath("xclip"); err == nil {
+			cmd := exec.Command("xclip", "-selection", "clipboard")
+			cmd.Stdin = strings.NewReader(text)
+			return cmd.Run()
+		}
+
+		if _, err := exec.LookPath("xsel"); err == nil {
+			cmd := exec.Command("xsel", "--clipboard", "--input")
+			cmd.Stdin = strings.NewReader(text)
+			return cmd.Run()
+		}
+
+		return fmt.Errorf("Linux 需要安装 wl-copy、xclip 或 xsel")
+
+	default:
+		return fmt.Errorf("暂不支持当前系统：%s", runtime.GOOS)
+	}
 }
 
 func main() {

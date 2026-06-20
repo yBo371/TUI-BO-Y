@@ -6,15 +6,17 @@ function clearScreen() {
 }
 
 function showHeader() {
-  console.log('╔════════════════════════════╗');
-  console.log('║        MY TERMINAL         ║');
-  console.log('╚════════════════════════════╝');
-  console.log('');
+  console.log('██████╗  ██████╗      ██╗   ██╗');
+  console.log('██╔══██╗██╔═══██╗     ╚██╗ ██╔╝');
+  console.log('██████╔╝██║   ██║█████╗╚████╔╝ ');
+  console.log('██╔══██╗██║   ██║╚════╝ ╚██╔╝');
+  console.log('██████╔╝╚██████╔╝        ██║');
+  console.log('╚═════╝  ╚═════╝         ╚═╝');
 }
 
 function randomPassword(length) {
   const chars =
-    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{};:,.<>?';
 
   let result = '';
 
@@ -80,36 +82,28 @@ async function main() {
     clearScreen();
     showHeader();
 
-    const choice = await select({
-      message: '请选择功能：',
-      choices: [
-        {
-          name: '密码生成器',
-          value: 'password',
-        },
-        {
-          name: '关于',
-          value: 'about',
-        },
-        {
-          name: '退出',
-          value: 'exit',
-        },
-      ],
+    console.log('');
+    console.log('1. 密码生成器');
+    console.log('2. 关于');
+    console.log('0. 退出');
+    console.log('');
+
+    const choice = await input({
+      message: '请输入功能编号：',
     });
 
-    if (choice === 'password') {
+    if (choice === '1') {
       await passwordPage();
-    }
-
-    if (choice === 'about') {
+    } else if (choice === '2') {
       await aboutPage();
-    }
-
-    if (choice === 'exit') {
+    } else if (choice === '0') {
       clearScreen();
       console.log('再见！');
       process.exit(0);
+    } else {
+      console.log('');
+      console.log('无效编号，请输入 1、2 或 0。');
+      await waitEnter();
     }
   }
 }
